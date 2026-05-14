@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>刷新任务控制台</title>
+    <style>
+        html, body { height: 100%; margin: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f7f6; display: flex; justify-content: center; align-items: center; }
+        .container { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 400px; }
+        h2 { color: #333; text-align: center; margin-bottom: 1.5rem; }
+        .input-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.5rem; color: #666; font-size: 14px; }
+        input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; transition: background 0.3s; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; }
+        .progress-container { margin-top: 2rem; display: none; }
+        .progress-bar { width: 100%; background: #eee; border-radius: 10px; height: 20px; overflow: hidden; margin-bottom: 10px; }
+        .progress-fill { width: 0%; height: 100%; background: #28a745; transition: width 0.3s; }
+        .status-text { font-size: 14px; color: #555; text-align: center; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>🚀 刷新控制台</h2>
+    <div class="input-group">
+        <label>目标网址</label>
+        <input type="text" id="url" placeholder="例如: https://www.example.com">
+    </div>
+    <div class="input-group">
+        <label>刷新次数</label>
+        <input type="number" id="count" value="1001">
+    </div>
+    <div style="display: flex; gap: 10px;">
+        <button id="startBtn" onclick="startTask()" style="flex: 1;">开始执行任务</button>
+        <button id="stopBtn" onclick="stopTask()" disabled style="flex: 1; background: #dc3545;">停止任务</button>
+    </div>
+
+    <div class="progress-container" id="progContainer">
+        <div class="progress-bar"><div class="progress-fill" id="progFill"></div></div>
+        <div class="status-text" id="statusMsg">准备就绪</div>
+    </div>
+</div>
+
+<script>
+    let timer;
+
+    async function startTask() {
+        const url = document.getElementById('url').value;
+        const count = document.getElementById('count').value;
+
+        if(!url) { alert("请输入目标网址"); return; }
+
+        // UI 初始化
+        document.getElementById('startBtn').disabled = true;
+        document.getElementById('stopBtn').disabled = false;
+        document.getElementById('progContainer').style.display = 'block';
+        document.getElementById('progFill').style.width = '0%';
+
+        const response = await fetch('/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: url, count: count})
+        });
+        const res = await response.json();
+        if(res.error) { alert(res.error); document.getElementById('startBtn').disabled = false; }
+
+        // 开始轮询进度
+        timer = setInterval(updateStatus, 500);
+    }
+
+    async function updateStatus() {
+        const response = await fetch('/status');
+        const data = await response.json();
+
+        document.getElementById('progFill').style.width = data.progress + '%';
+        document.getElementById('statusMsg').innerText = `${data.message} (${data.success_count}/${data.total_count})`;
+
+        if (!data.is_running) {
+            clearInterval(timer);
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+        }
+    }
+
+    async function stopTask() {
+        if (!confirm("确定要停止当前任务吗？")) {
+            return;
+        }
+        
+        const response = await fetch('/stop', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const res = await response.json();
+        if (res.error) {
+            alert(res.error);
+        } else {
+            document.getElementById('stopBtn').disabled = true;
+            alert(res.message);
+        }
+    }
+    </script>
+</body>
+</html>

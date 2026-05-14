@@ -1,0 +1,30 @@
+# Python 缓存文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# 浏览器驱动缓存
+.wdm/
+chromedriver*
+geckodriver*
+
+# Mac 系统文件
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp

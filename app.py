@@ -7,6 +7,9 @@ from selenium import webdriver
 app = Flask(__name__)
 
 # --- 全局状态管理 ---
+import tempfile
+import shutil
+
 class TaskStatus:
     def __init__(self):
         self.is_running = False
@@ -17,6 +20,7 @@ class TaskStatus:
         self.message = "等待任务开始..."
         self.stop_requested = False
         self.driver = None
+        self.mode = "pv"
 
 status = TaskStatus()
 
@@ -29,8 +33,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36"
 ]
 
-def brush_logic(url, count):
-    """核心刷量逻辑：打开浏览器访问并刷新指定次数"""
+def brush_logic(url, count, mode="pv"):
+    """核心刷量逻辑：支持单窗口刷PV和多独立窗口刷UV两种模式"""
     global status
     status.is_running = True
     status.progress = 0
@@ -39,43 +43,99 @@ def brush_logic(url, count):
     status.current_scene = url
     status.message = "正在运行..."
     status.stop_requested = False
+    status.mode = mode
 
     try:
-        # 初始化Chrome浏览器，添加启动参数解决黑屏问题和权限问题
-        chrome_options = webdriver.ChromeOptions()
-        chrome_options.add_argument("--start-maximized")  # 启动时最大化
-        chrome_options.add_argument("--disable-gpu")  # 禁用GPU加速，解决黑屏
-        chrome_options.add_argument("--no-sandbox")  # 禁用沙箱模式
-        chrome_options.add_argument("--disable-dev-shm-usage")  # 解决资源限制问题
-        # Selenium 4.6+ 内置自动驱动管理，不需要额外安装驱动
-        status.driver = webdriver.Chrome(options=chrome_options)
-        # 首次打开网址
-        status.driver.get(url)
-        status.success_count += 1
-        
-        for i in range(2, count + 1):
-            # 检查是否需要停止任务
-            if status.stop_requested:
-                break
+        if mode == "pv":
+            # 单窗口重复刷新模式（原逻辑）
+            chrome_options = webdriver.ChromeOptions()
+            chrome_options.add_argument("--start-maximized")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            status.driver = webdriver.Chrome(options=chrome_options)
+            # 首次打开网址
+            status.driver.get(url)
+            status.success_count = 1
+            status.progress = int((1 / count) * 100)
             
-            try:
-                # 刷新页面
-                status.driver.refresh()
-                status.success_count += 1
-            except Exception:
-                pass
+            for i in range(2, count + 1):
+                if status.stop_requested:
+                    break
+                try:
+                    status.driver.refresh()
+                    status.success_count += 1
+                except Exception:
+                    pass
+                status.progress = int((i / count) * 100)
+                time.sleep(random.uniform(1, 3))
             
-            # 更新进度
-            status.progress = int((i / count) * 100)
-            # 随机延迟 1s - 3s，模拟真实操作
-            time.sleep(random.uniform(1, 3))
-        
-        # 任务完成后关闭浏览器
-        status.driver.quit()
-        status.driver = None
+            # 关闭浏览器
+            status.driver.quit()
+            status.driver = None
+
+        elif mode == "uv":
+            # 多独立窗口刷UV模式：每次启动全新无痕浏览器访问一次
+            for i in range(1, count + 1):
+                if status.stop_requested:
+                    break
+                temp_dir = None
+                try:
+                    # 创建临时目录作为独立用户数据目录，完全隔离会话
+                    temp_dir = tempfile.mkdtemp()
+                    chrome_options = webdriver.ChromeOptions()
+                    chrome_options.add_argument("--incognito")  # 无痕模式
+                    chrome_options.add_argument(f"--user-data-dir={temp_dir}")  # 独立数据目录
+                    chrome_options.add_argument("--new-window")  # 新窗口打开
+                    chrome_options.add_argument("--disable-gpu")
+                    chrome_options.add_argument("--no-sandbox")
+                    chrome_options.add_argument("--disable-dev-shm-usage")
+                    chrome_options.add_argument("--window-size=800,600")  # 固定窗口大小，避免占满屏幕
+                    
+                    # 启动全新浏览器
+                    status.driver = webdriver.Chrome(options=chrome_options)
+                    status.driver.get(url)
+                    status.success_count += 1
+                    
+                    # 等待页面加载完成（1-2秒模拟用户停留）
+                    time.sleep(random.uniform(1, 2))
+                    
+                    # 关闭当前浏览器
+                    status.driver.quit()
+                    status.driver = None
+                    
+                    # 删除临时目录，清理数据
+                    shutil.rmtree(temp_dir)
+                    
+                except Exception as e:
+                    # 出错清理资源
+                    if status.driver:
+                        try:
+                            status.driver.quit()
+                        except:
+                            pass
+                    if temp_dir:
+                        try:
+                            shutil.rmtree(temp_dir)
+                        except:
+                            pass
+                    continue
+                
+                # 更新进度
+                status.progress = int((i / count) * 100)
+                # 每次访问间隔1-3秒，模拟不同用户访问间隔
+                time.sleep(random.uniform(1, 3))
+
     except Exception as e:
         status.message = f"任务出错: {str(e)}"
     finally:
+        # 最终清理资源
+        if status.driver:
+            try:
+                status.driver.quit()
+            except:
+                pass
+            status.driver = None
         status.is_running = False
         if status.stop_requested:
             status.message = "任务已手动停止"
@@ -95,12 +155,13 @@ def start():
     data = request.json
     url = data.get('url')
     count = int(data.get('count', 10))
+    mode = data.get('mode', 'pv')  # 模式参数，默认pv模式
     # 自动补全http/https前缀，支持短链接格式
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
 
     # 开启新线程执行任务，避免阻塞 Web 服务
-    thread = threading.Thread(target=brush_logic, args=(url, count))
+    thread = threading.Thread(target=brush_logic, args=(url, count, mode))
     thread.start()
 
     return jsonify({"message": "任务已启动"})

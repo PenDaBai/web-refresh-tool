@@ -25,11 +25,26 @@
     <h2>🚀 刷新控制台</h2>
     <div class="input-group">
         <label>目标网址</label>
-        <input type="text" id="url" placeholder="例如: https://www.example.com">
+        <input type="text" id="url" placeholder="例如：https://www.example.com">
     </div>
     <div class="input-group">
-        <label>刷新次数</label>
-        <input type="number" id="count" value="1001">
+        <label>功能模式</label>
+        <div style="display: flex; gap: 20px; padding: 5px 0;">
+            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                <input type="radio" name="mode" value="pv" checked> 单窗口重复刷新（仅增加PV）
+            </label>
+            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                <input type="radio" name="mode" value="uv"> 多独立窗口访问（每次算新UV）
+            </label>
+        </div>
+        <div style="font-size: 12px; color: #666; margin-top: 5px;">
+            • 单窗口模式：启动一个浏览器窗口重复刷新N次，仅增加PV，UV只算1个<br>
+            • 多UV模式：每次启动全新无痕浏览器访问一次，每次都是独立会话，算新UV
+        </div>
+    </div>
+    <div class="input-group">
+        <label>访问次数</label>
+        <input type="number" id="count" value="10">
     </div>
     <div style="display: flex; gap: 10px;">
         <button id="startBtn" onclick="startTask()" style="flex: 1;">开始执行任务</button>
@@ -48,6 +63,7 @@
     async function startTask() {
         const url = document.getElementById('url').value;
         const count = document.getElementById('count').value;
+        const mode = document.querySelector('input[name="mode"]:checked').value;
 
         if(!url) { alert("请输入目标网址"); return; }
 
@@ -60,7 +76,7 @@
         const response = await fetch('/start', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({url: url, count: count})
+            body: JSON.stringify({url: url, count: count, mode: mode})
         });
         const res = await response.json();
         if(res.error) { alert(res.error); document.getElementById('startBtn').disabled = false; }

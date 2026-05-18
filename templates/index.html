@@ -43,6 +43,21 @@
         </div>
     </div>
     <div class="input-group">
+        <label>运行模式</label>
+        <div style="display: flex; gap: 20px; padding: 5px 0;">
+            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                <input type="radio" name="run_mode" value="visible" checked> 可见窗口模式（弹出浏览器窗口）
+            </label>
+            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                <input type="radio" name="run_mode" value="headless"> 后台静默模式（不弹出窗口，不影响操作）
+            </label>
+        </div>
+        <div style="font-size: 12px; color: #666; margin-top: 5px;">
+            • 可见窗口模式：正常弹出Chrome窗口，可以看到访问过程，适合调试<br>
+            • 后台静默模式：浏览器完全后台运行，不会弹出任何窗口，不影响电脑操作
+        </div>
+    </div>
+    <div class="input-group">
         <label>访问次数</label>
         <input type="number" id="count" value="10">
     </div>
@@ -64,6 +79,7 @@
         const url = document.getElementById('url').value;
         const count = document.getElementById('count').value;
         const mode = document.querySelector('input[name="mode"]:checked').value;
+        const run_mode = document.querySelector('input[name="run_mode"]:checked').value;
 
         if(!url) { alert("请输入目标网址"); return; }
 
@@ -76,7 +92,7 @@
         const response = await fetch('/start', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({url: url, count: count, mode: mode})
+            body: JSON.stringify({url: url, count: count, mode: mode, run_mode: run_mode})
         });
         const res = await response.json();
         if(res.error) { alert(res.error); document.getElementById('startBtn').disabled = false; }

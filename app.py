@@ -33,8 +33,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36"
 ]
 
-def brush_logic(url, count, mode="pv"):
-    """核心刷量逻辑：支持单窗口刷PV和多独立窗口刷UV两种模式"""
+def brush_logic(url, count, mode="pv", run_mode="visible"):
+    """核心刷量逻辑：支持单窗口刷PV和多独立窗口刷UV两种模式，支持可见/后台静默运行"""
     global status
     status.is_running = True
     status.progress = 0
@@ -49,7 +49,15 @@ def brush_logic(url, count, mode="pv"):
         if mode == "pv":
             # 单窗口重复刷新模式（原逻辑）
             chrome_options = webdriver.ChromeOptions()
-            chrome_options.add_argument("--start-maximized")
+            if run_mode == "visible":
+                chrome_options.add_argument("--start-maximized")  # 可见模式下最大化窗口
+            else:
+                # 后台无头模式参数
+                chrome_options.add_argument("--headless=new")  # Chrome新版无头模式，行为和有头完全一致
+                chrome_options.add_argument("--mute-audio")  # 静音
+                chrome_options.add_argument("--disable-extensions")  # 禁用所有扩展
+                chrome_options.add_argument("--disable-notifications")  # 禁用桌面通知
+                chrome_options.add_argument("--window-size=1920,1080")  # 模拟正常窗口大小
             chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
@@ -86,11 +94,19 @@ def brush_logic(url, count, mode="pv"):
                     chrome_options = webdriver.ChromeOptions()
                     chrome_options.add_argument("--incognito")  # 无痕模式
                     chrome_options.add_argument(f"--user-data-dir={temp_dir}")  # 独立数据目录
-                    chrome_options.add_argument("--new-window")  # 新窗口打开
                     chrome_options.add_argument("--disable-gpu")
                     chrome_options.add_argument("--no-sandbox")
                     chrome_options.add_argument("--disable-dev-shm-usage")
-                    chrome_options.add_argument("--window-size=800,600")  # 固定窗口大小，避免占满屏幕
+                    if run_mode == "visible":
+                        chrome_options.add_argument("--new-window")  # 新窗口打开
+                        chrome_options.add_argument("--window-size=800,600")  # 固定窗口大小，避免占满屏幕
+                    else:
+                        # 后台无头模式参数
+                        chrome_options.add_argument("--headless=new")  # Chrome新版无头模式
+                        chrome_options.add_argument("--mute-audio")  # 静音
+                        chrome_options.add_argument("--disable-extensions")  # 禁用所有扩展
+                        chrome_options.add_argument("--disable-notifications")  # 禁用桌面通知
+                        chrome_options.add_argument("--window-size=1920,1080")  # 模拟正常窗口大小
                     
                     # 启动全新浏览器
                     status.driver = webdriver.Chrome(options=chrome_options)
@@ -155,13 +171,14 @@ def start():
     data = request.json
     url = data.get('url')
     count = int(data.get('count', 10))
-    mode = data.get('mode', 'pv')  # 模式参数，默认pv模式
+    mode = data.get('mode', 'pv')  # 功能模式，默认pv模式
+    run_mode = data.get('run_mode', 'visible')  # 运行模式，默认可见窗口
     # 自动补全http/https前缀，支持短链接格式
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
 
     # 开启新线程执行任务，避免阻塞 Web 服务
-    thread = threading.Thread(target=brush_logic, args=(url, count, mode))
+    thread = threading.Thread(target=brush_logic, args=(url, count, mode, run_mode))
     thread.start()
 
     return jsonify({"message": "任务已启动"})

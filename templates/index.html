@@ -61,6 +61,14 @@
         <label>访问次数</label>
         <input type="number" id="count" value="10">
     </div>
+    <div class="input-group">
+        <label>最大并行数</label>
+        <input type="number" id="parallel_num" value="1" min="1" max="10">
+        <div style="font-size: 12px; color: #666; margin-top: 5px;">
+            • 可选范围1-10，默认1（串行模式），并行数越大速度越快<br>
+            • 并行数大于5时会占用较多CPU/内存，可能导致电脑卡顿，会弹出确认提示
+        </div>
+    </div>
     <div style="display: flex; gap: 10px;">
         <button id="startBtn" onclick="startTask()" style="flex: 1;">开始执行任务</button>
         <button id="stopBtn" onclick="stopTask()" disabled style="flex: 1; background: #dc3545;">停止任务</button>
@@ -77,11 +85,31 @@
 
     async function startTask() {
         const url = document.getElementById('url').value;
-        const count = document.getElementById('count').value;
+        let count = parseInt(document.getElementById('count').value);
         const mode = document.querySelector('input[name="mode"]:checked').value;
         const run_mode = document.querySelector('input[name="run_mode"]:checked').value;
+        let parallel_num = parseInt(document.getElementById('parallel_num').value);
 
         if(!url) { alert("请输入目标网址"); return; }
+        
+        // 并行数范围校验
+        if(isNaN(parallel_num) || parallel_num < 1) parallel_num = 1;
+        if(parallel_num > 10) parallel_num = 10;
+        document.getElementById('parallel_num').value = parallel_num;
+
+        // 并行数大于5弹出确认提示
+        if(parallel_num > 5) {
+            if(!confirm(`你设置的并行数为${parallel_num}，可能会占用较多CPU/内存导致电脑卡顿，确认要继续吗？`)) {
+                return;
+            }
+        }
+
+        // 访问次数不能小于并行数
+        if(count < parallel_num) {
+            alert(`访问次数不能小于并行数${parallel_num}，已自动调整为${parallel_num}`);
+            count = parallel_num;
+            document.getElementById('count').value = count;
+        }
 
         // UI 初始化
         document.getElementById('startBtn').disabled = true;
@@ -92,7 +120,7 @@
         const response = await fetch('/start', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({url: url, count: count, mode: mode, run_mode: run_mode})
+            body: JSON.stringify({url: url, count: count, mode: mode, run_mode: run_mode, parallel_num: parallel_num})
         });
         const res = await response.json();
         if(res.error) { alert(res.error); document.getElementById('startBtn').disabled = false; }

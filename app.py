@@ -12,20 +12,36 @@ import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-class TaskStatus:
-    def __init__(self):
-        self.is_running = False
-        self.progress = 0
+class SingleTaskStatus:
+    """单个任务的状态"""
+    def __init__(self, task_id, url, count, mode, run_mode, parallel_num):
+        self.task_id = task_id
+        self.url = url
+        self.total_count = count
+        self.mode = mode
+        self.run_mode = run_mode
+        self.parallel_num = parallel_num
         self.success_count = 0
-        self.current_scene = ""
-        self.total_count = 0
-        self.message = "等待任务开始..."
+        self.progress = 0
+        self.message = "等待开始..."
+        self.is_running = False
         self.stop_requested = False
-        self.drivers = []  # 存储所有运行中的driver实例，方便停止
-        self.mode = "pv"
-        self.lock = threading.Lock()  # 线程锁，避免多线程同时修改计数出错
+        self.drivers = []
+        self.lock = threading.Lock()
 
-status = TaskStatus()
+class GlobalStatus:
+    """全局状态管理"""
+    def __init__(self):
+        self.tasks = []
+        self.is_running = False
+        self.stop_requested = False
+        self.total_count = 0
+        self.total_success_count = 0
+        self.total_progress = 0
+        self.message = "等待任务开始..."
+        self.global_lock = threading.Lock()
+
+status = GlobalStatus()
 
 # --- 模拟设备列表 (User-Agents) ---
 USER_AGENTS = [
@@ -36,10 +52,9 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36"
 ]
 
-def single_uv_task(url, run_mode):
+def single_uv_task(task_status: SingleTaskStatus):
     """单UV任务函数，供并行调用"""
-    global status
-    if status.stop_requested:
+    if task_status.stop_requested or status.stop_requested:
         return False
     
     temp_dir = None
@@ -53,7 +68,7 @@ def single_uv_task(url, run_mode):
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
-        if run_mode == "visible":
+        if task_status.run_mode == "visible":
             chrome_options.add_argument("--new-window")  # 新窗口打开
             chrome_options.add_argument("--window-size=800,600")  # 固定窗口大小，避免占满屏幕
         else:
@@ -66,19 +81,23 @@ def single_uv_task(url, run_mode):
         
         # 启动全新浏览器
         driver = webdriver.Chrome(options=chrome_options)
-        # 将driver加入全局列表，方便停止
-        with status.lock:
-            status.drivers.append(driver)
+        # 将driver加入任务的列表，方便停止
+        with task_status.lock:
+            task_status.drivers.append(driver)
         
-        driver.get(url)
+        driver.get(task_status.url)
         
         # 等待页面加载完成（1-2秒模拟用户停留）
         time.sleep(random.uniform(1, 2))
         
         # 成功一次，加锁修改计数
-        with status.lock:
-            status.success_count += 1
-            status.progress = int((status.success_count / status.total_count) * 100)
+        with task_status.lock:
+            task_status.success_count += 1
+            task_status.progress = int((task_status.success_count / task_status.total_count) * 100)
+        # 更新全局计数
+        with status.global_lock:
+            status.total_success_count += 1
+            status.total_progress = int((status.total_success_count / status.total_count) * 100)
         
         return True
     except Exception:
@@ -88,9 +107,9 @@ def single_uv_task(url, run_mode):
         if driver:
             try:
                 driver.quit()
-                with status.lock:
-                    if driver in status.drivers:
-                        status.drivers.remove(driver)
+                with task_status.lock:
+                    if driver in task_status.drivers:
+                        task_status.drivers.remove(driver)
             except Exception:
                 pass
         if temp_dir:
@@ -99,19 +118,18 @@ def single_uv_task(url, run_mode):
             except Exception:
                 pass
         # 每个任务完成后随机间隔0.5-2秒，避免请求太集中
-        if not status.stop_requested:
+        if not task_status.stop_requested and not status.stop_requested:
             time.sleep(random.uniform(0.5, 2))
 
-def single_pv_worker(url, refresh_count, run_mode):
+def single_pv_worker(task_status: SingleTaskStatus, refresh_count: int):
     """单PV工作线程函数，一个窗口刷新refresh_count次"""
-    global status
-    if status.stop_requested:
+    if task_status.stop_requested or status.stop_requested:
         return
     
     driver = None
     try:
         chrome_options = webdriver.ChromeOptions()
-        if run_mode == "visible":
+        if task_status.run_mode == "visible":
             chrome_options.add_argument("--start-maximized")  # 可见模式下最大化窗口
         else:
             # 后台无头模式参数
@@ -125,25 +143,33 @@ def single_pv_worker(url, refresh_count, run_mode):
         chrome_options.add_argument("--disable-dev-shm-usage")
         
         driver = webdriver.Chrome(options=chrome_options)
-        # 将driver加入全局列表，方便停止
-        with status.lock:
-            status.drivers.append(driver)
+        # 将driver加入任务的列表，方便停止
+        with task_status.lock:
+            task_status.drivers.append(driver)
         
         # 首次打开网址
-        driver.get(url)
-        with status.lock:
-            status.success_count += 1
-            status.progress = int((status.success_count / status.total_count) * 100)
+        driver.get(task_status.url)
+        with task_status.lock:
+            task_status.success_count += 1
+            task_status.progress = int((task_status.success_count / task_status.total_count) * 100)
+        # 更新全局计数
+        with status.global_lock:
+            status.total_success_count += 1
+            status.total_progress = int((status.total_success_count / status.total_count) * 100)
         
         # 刷新指定次数
         for _ in range(refresh_count - 1):
-            if status.stop_requested:
+            if task_status.stop_requested or status.stop_requested:
                 break
             try:
                 driver.refresh()
-                with status.lock:
-                    status.success_count += 1
-                    status.progress = int((status.success_count / status.total_count) * 100)
+                with task_status.lock:
+                    task_status.success_count += 1
+                    task_status.progress = int((task_status.success_count / task_status.total_count) * 100)
+                # 更新全局计数
+                with status.global_lock:
+                    status.total_success_count += 1
+                    status.total_progress = int((status.total_success_count / status.total_count) * 100)
             except Exception:
                 pass
             time.sleep(random.uniform(1, 3))
@@ -155,76 +181,119 @@ def single_pv_worker(url, refresh_count, run_mode):
         if driver:
             try:
                 driver.quit()
-                with status.lock:
-                    if driver in status.drivers:
-                        status.drivers.remove(driver)
+                with task_status.lock:
+                    if driver in task_status.drivers:
+                        task_status.drivers.remove(driver)
             except Exception:
                 pass
 
-def brush_logic(url, count, mode="pv", run_mode="visible", parallel_num=1):
-    """核心刷量逻辑：支持单窗口刷PV和多独立窗口刷UV两种模式，支持可见/后台静默运行"""
-    global status
-    status.is_running = True
-    status.progress = 0
-    status.success_count = 0
-    status.total_count = count
-    status.current_scene = url
-    status.message = "正在运行..."
-    status.stop_requested = False
-    status.mode = mode
-    with status.lock:
-        status.drivers.clear()
-
+def run_single_task(task_status: SingleTaskStatus):
+    """运行单个任务"""
+    task_status.is_running = True
+    task_status.message = "正在运行..."
+    task_status.success_count = 0
+    task_status.progress = 0
+    with task_status.lock:
+        task_status.drivers.clear()
+    
     try:
-        if mode == "uv":
+        if task_status.mode == "uv":
             # 多UV模式，线程池并行执行
-            with ThreadPoolExecutor(max_workers=parallel_num) as executor:
-                futures = [executor.submit(single_uv_task, url, run_mode) for _ in range(count)]
+            with ThreadPoolExecutor(max_workers=task_status.parallel_num) as executor:
+                futures = [executor.submit(single_uv_task, task_status) for _ in range(task_status.total_count)]
                 # 等待所有任务完成或者收到停止信号
-                while not status.stop_requested and any(not f.done() for f in futures):
+                while not task_status.stop_requested and not status.stop_requested and any(not f.done() for f in futures):
                     time.sleep(0.5)
 
-        elif mode == "pv":
+        elif task_status.mode == "pv":
             # 单PV模式，拆分任务给多个并行worker
-            if parallel_num == 1:
-                # 串行模式，和原来逻辑一致
-                single_pv_worker(url, count, run_mode)
+            if task_status.parallel_num == 1:
+                # 串行模式
+                single_pv_worker(task_status, task_status.total_count)
             else:
                 # 并行模式，拆分总次数到多个worker
-                base_count = count // parallel_num
-                extra = count % parallel_num
-                tasks = []
-                for i in range(parallel_num):
-                    worker_count = base_count + (1 if i < extra else 0)
-                    tasks.append(worker_count)
+                base_count = task_status.total_count // task_status.parallel_num
+                extra = task_status.total_count % task_status.parallel_num
+                worker_counts = []
+                for i in range(task_status.parallel_num):
+                    cnt = base_count + (1 if i < extra else 0)
+                    worker_counts.append(cnt)
                 
                 # 线程池执行
-                with ThreadPoolExecutor(max_workers=parallel_num) as executor:
-                    futures = [executor.submit(single_pv_worker, url, cnt, run_mode) for cnt in tasks]
+                with ThreadPoolExecutor(max_workers=task_status.parallel_num) as executor:
+                    futures = [executor.submit(single_pv_worker, task_status, cnt) for cnt in worker_counts]
                     # 等待所有任务完成或者收到停止信号
-                    while not status.stop_requested and any(not f.done() for f in futures):
+                    while not task_status.stop_requested and not status.stop_requested and any(not f.done() for f in futures):
                         time.sleep(0.5)
-
+        
+        # 任务完成
+        if not task_status.stop_requested and not status.stop_requested:
+            task_status.message = "任务已完成"
     except Exception as e:
-        status.message = f"任务出错: {str(e)}"
+        task_status.message = f"任务出错: {str(e)}"
     finally:
-        # 最终清理所有资源
+        # 清理当前任务的所有资源
         try:
-            with status.lock:
-                for driver in status.drivers:
+            with task_status.lock:
+                for driver in task_status.drivers:
                     try:
                         driver.quit()
                     except Exception:
                         pass
-                status.drivers.clear()
+                task_status.drivers.clear()
         except Exception:
             pass
-        
-        status.is_running = False
-        if status.stop_requested:
-            status.message = "任务已手动停止"
-        elif status.progress >= 100:
-            status.message = "任务已完成"
+        task_status.is_running = False
+        if task_status.stop_requested or status.stop_requested:
+            task_status.message = "任务已手动停止"
+        elif task_status.progress >= 100:
+            task_status.message = "任务已完成"
+
+def brush_logic(tasks_config):
+    """核心刷量逻辑：支持多任务独立运行"""
+    global status
+    status.is_running = True
+    status.stop_requested = False
+    status.tasks = []
+    status.total_count = 0
+    status.total_success_count = 0
+    status.total_progress = 0
+    status.message = "正在运行所有任务..."
+
+    # 初始化所有任务状态
+    for idx, task_config in enumerate(tasks_config):
+        url = task_config['url']
+        # 自动补全http协议
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+        task = SingleTaskStatus(
+            task_id = idx,
+            url = url,
+            count = task_config['count'],
+            mode = task_config['mode'],
+            run_mode = task_config['run_mode'],
+            parallel_num = task_config['parallel_num']
+        )
+        status.tasks.append(task)
+        status.total_count += task_config['count']
+    
+    # 每个任务启动独立线程运行
+    task_threads = []
+    for task in status.tasks:
+        t = threading.Thread(target=run_single_task, args=(task,))
+        t.start()
+        task_threads.append(t)
+    
+    # 等待所有任务完成或者收到停止信号
+    while not status.stop_requested and any(t.is_alive() for t in task_threads):
+        time.sleep(0.5)
+    
+    # 所有任务结束
+    status.is_running = False
+    if status.stop_requested:
+        status.message = "所有任务已手动停止"
+    else:
+        status.message = "所有任务已完成"
 
 @app.route('/')
 def index():
@@ -237,36 +306,47 @@ def start():
         return jsonify({"error": "任务正在运行中，请勿重复点击！"})
 
     data = request.json
-    url = data.get('url')
-    count = int(data.get('count', 10))
-    mode = data.get('mode', 'pv')  # 功能模式，默认pv模式
-    run_mode = data.get('run_mode', 'visible')  # 运行模式，默认可见窗口
-    parallel_num = int(data.get('parallel_num', 1))  # 最大并行数，默认1串行
+    tasks = data.get('tasks', [])
     
-    # 并行数范围校验
-    parallel_num = max(1, min(10, parallel_num))
-    # 访问次数不能小于并行数
-    count = max(count, parallel_num)
+    if not tasks:
+        return jsonify({"error": "请至少配置一个任务！"})
     
-    # 自动补全http/https前缀，支持短链接格式
-    if not url.startswith(('http://', 'https://')):
-        url = 'https://' + url
+    # 校验每个任务的参数
+    for idx, task in enumerate(tasks):
+        if not task.get('url'):
+            return jsonify({"error": f"任务 {idx+1} 请输入目标网址！"})
+        task['count'] = max(int(task.get('count', 10)), 1)
+        task['parallel_num'] = max(1, min(10, int(task.get('parallel_num', 1))))
+        task['count'] = max(task['count'], task['parallel_num'])
 
-    # 开启新线程执行任务，避免阻塞 Web 服务
-    thread = threading.Thread(target=brush_logic, args=(url, count, mode, run_mode, parallel_num))
+    # 开启新线程执行任务，避免阻塞Web服务
+    thread = threading.Thread(target=brush_logic, args=(tasks,))
     thread.start()
 
-    return jsonify({"message": "任务已启动"})
+    return jsonify({"message": "所有任务已启动"})
 
 @app.route('/status')
 def get_status():
+    # 格式化每个任务的状态
+    tasks_status = []
+    for task in status.tasks:
+        tasks_status.append({
+            "task_id": task.task_id,
+            "url": task.url,
+            "is_running": task.is_running,
+            "progress": task.progress,
+            "success_count": task.success_count,
+            "total_count": task.total_count,
+            "message": task.message
+        })
+    
     return jsonify({
         "is_running": status.is_running,
-        "progress": status.progress,
-        "success_count": status.success_count,
+        "total_progress": status.total_progress,
+        "total_success_count": status.total_success_count,
         "total_count": status.total_count,
-        "current_scene": status.current_scene,
-        "message": status.message
+        "message": status.message,
+        "tasks": tasks_status
     })
 
 @app.route('/stop', methods=['POST'])
@@ -275,21 +355,23 @@ def stop_task():
     if not status.is_running:
         return jsonify({"error": "当前没有运行中的任务"})
     
-    # 设置停止标志
+    # 设置全局停止标志
     status.stop_requested = True
-    # 尝试直接关闭所有运行中的浏览器
+    # 设置每个任务的停止标志，关闭所有浏览器
     try:
-        with status.lock:
-            for driver in status.drivers:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
-            status.drivers.clear()
+        for task in status.tasks:
+            task.stop_requested = True
+            with task.lock:
+                for driver in task.drivers:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                task.drivers.clear()
     except Exception:
         pass
     
-    return jsonify({"message": "停止指令已发送，任务将在当前操作完成后停止"})
+    return jsonify({"message": "停止指令已发送，所有任务将在当前操作完成后停止"})
 
 if __name__ == '__main__':
     # 启动 Web 服务，默认端口 5000

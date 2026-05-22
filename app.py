@@ -51,6 +51,9 @@ PAGE_READY_TIMEOUT_SECONDS = 15
 # UV页面ready之后的额外停留时间；如果统计不到，可手动调大这两个值。
 UV_MIN_STAY_SECONDS = 1.5
 UV_MAX_STAY_SECONDS = 2.5
+# PV每次刷新成功后的间隔时间；如果目标页面统计较慢，可手动调大这两个值。
+PV_MIN_REFRESH_INTERVAL_SECONDS = 1
+PV_MAX_REFRESH_INTERVAL_SECONDS = 3
 
 def record_task_result(task_status: SingleTaskStatus, success=0, failed=0):
     """记录一次或多次访问结果，进度按已完成尝试数计算。"""
@@ -108,11 +111,53 @@ USER_AGENT_PROFILES = [
         "device_metrics": {"width": 412, "height": 915, "pixelRatio": 2.625},
     },
     {
+        "name": "Pixel 7 Chrome",
+        "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "window_size": "412,915",
+        "mobile": True,
+        "device_metrics": {"width": 412, "height": 915, "pixelRatio": 2.625},
+    },
+    {
         "name": "Samsung Chrome",
         "ua": "Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
         "window_size": "384,854",
         "mobile": True,
         "device_metrics": {"width": 384, "height": 854, "pixelRatio": 3},
+    },
+    {
+        "name": "Xiaomi Chrome",
+        "ua": "Mozilla/5.0 (Linux; Android 14; 23127PN0CC) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "window_size": "393,873",
+        "mobile": True,
+        "device_metrics": {"width": 393, "height": 873, "pixelRatio": 3},
+    },
+    {
+        "name": "OPPO Chrome",
+        "ua": "Mozilla/5.0 (Linux; Android 14; PHZ110) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "window_size": "412,915",
+        "mobile": True,
+        "device_metrics": {"width": 412, "height": 915, "pixelRatio": 3},
+    },
+    {
+        "name": "vivo Chrome",
+        "ua": "Mozilla/5.0 (Linux; Android 14; V2309A) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "window_size": "412,915",
+        "mobile": True,
+        "device_metrics": {"width": 412, "height": 915, "pixelRatio": 3},
+    },
+    {
+        "name": "iPhone Safari",
+        "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+        "window_size": "393,852",
+        "mobile": True,
+        "device_metrics": {"width": 393, "height": 852, "pixelRatio": 3},
+    },
+    {
+        "name": "iPhone Chrome",
+        "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/124.0.0.0 Mobile/15E148 Safari/604.1",
+        "window_size": "390,844",
+        "mobile": True,
+        "device_metrics": {"width": 390, "height": 844, "pixelRatio": 3},
     },
 ]
 
@@ -233,7 +278,7 @@ def single_pv_worker(task_status: SingleTaskStatus, refresh_count: int):
                 if not task_status.stop_requested and not status.stop_requested:
                     print(f"[PV刷新失败] {task_status.url}: {e}", flush=True)
                     record_task_result(task_status, failed=1)
-            time.sleep(random.uniform(1, 3))
+            time.sleep(random.uniform(PV_MIN_REFRESH_INTERVAL_SECONDS, PV_MAX_REFRESH_INTERVAL_SECONDS))
             
     except Exception as e:
         if not task_status.stop_requested and not status.stop_requested:

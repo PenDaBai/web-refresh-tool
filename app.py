@@ -3,6 +3,7 @@ import time
 import random
 from flask import Flask, render_template, request, jsonify
 from selenium import webdriver
+from selenium.webdriver.support.ui import WebDriverWait
 
 app = Flask(__name__)
 
@@ -45,6 +46,12 @@ class GlobalStatus:
 
 status = GlobalStatus()
 
+PAGE_LOAD_TIMEOUT_SECONDS = 30
+PAGE_READY_TIMEOUT_SECONDS = 15
+# UV页面ready之后的额外停留时间；如果统计不到，可手动调大这两个值。
+UV_MIN_STAY_SECONDS = 1.5
+UV_MAX_STAY_SECONDS = 2.5
+
 def record_task_result(task_status: SingleTaskStatus, success=0, failed=0):
     """记录一次或多次访问结果，进度按已完成尝试数计算。"""
     with task_status.lock:
@@ -58,6 +65,20 @@ def record_task_result(task_status: SingleTaskStatus, success=0, failed=0):
         status.total_failed_count += failed
         total_completed_count = status.total_success_count + status.total_failed_count
         status.total_progress = min(100, int((total_completed_count / status.total_count) * 100))
+
+def wait_for_page_ready(driver):
+    """等待页面完成基础渲染，避免刚触发导航就关闭浏览器。"""
+    WebDriverWait(driver, PAGE_READY_TIMEOUT_SECONDS).until(
+        lambda d: d.execute_script("return document.readyState") == "complete"
+    )
+    WebDriverWait(driver, PAGE_READY_TIMEOUT_SECONDS).until(
+        lambda d: d.execute_script("""
+            const body = document.body;
+            if (!body) return false;
+            const rect = body.getBoundingClientRect();
+            return body.children.length > 0 && rect.width > 0 && rect.height > 0;
+        """)
+    )
 
 # --- 模拟设备列表 (User-Agents) ---
 USER_AGENT_PROFILES = [
@@ -132,15 +153,16 @@ def single_uv_task(task_status: SingleTaskStatus):
         
         # 启动全新浏览器
         driver = webdriver.Chrome(options=chrome_options)
-        driver.set_page_load_timeout(30)
+        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_SECONDS)
         # 将driver加入任务的列表，方便停止
         with task_status.lock:
             task_status.drivers.append(driver)
         
         driver.get(task_status.url)
+        wait_for_page_ready(driver)
         
-        # 等待页面加载完成（1-2秒模拟用户停留）
-        time.sleep(random.uniform(1, 2))
+        # 页面完成基础渲染后继续停留，给异步统计请求留出发送时间。
+        time.sleep(random.uniform(UV_MIN_STAY_SECONDS, UV_MAX_STAY_SECONDS))
         
         record_task_result(task_status, success=1)
         
@@ -191,7 +213,7 @@ def single_pv_worker(task_status: SingleTaskStatus, refresh_count: int):
         chrome_options.add_argument("--disable-dev-shm-usage")
         
         driver = webdriver.Chrome(options=chrome_options)
-        driver.set_page_load_timeout(30)
+        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_SECONDS)
         # 将driver加入任务的列表，方便停止
         with task_status.lock:
             task_status.drivers.append(driver)

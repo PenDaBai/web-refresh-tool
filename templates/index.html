@@ -247,7 +247,7 @@
 
         // 更新总进度
         document.getElementById('totalProgFill').style.width = data.total_progress + '%';
-        document.getElementById('totalStatusMsg').innerText = `${data.message} (总成功：${data.total_success_count}/${data.total_count})`;
+        document.getElementById('totalStatusMsg').innerText = `${data.message} (总成功：${data.total_success_count}/${data.total_count}，失败：${data.total_failed_count || 0})`;
 
         // 更新每个任务的进度
         if(data.tasks) {
@@ -257,7 +257,7 @@
                     const progFill = taskRows[idx].querySelector('.progress-fill');
                     const statusText = taskRows[idx].querySelector('.task-status');
                     progFill.style.width = task.progress + '%';
-                    statusText.innerText = `${task.message} (${task.success_count}/${task.total_count})`;
+                    statusText.innerText = `${task.message} (成功：${task.success_count}/${task.total_count}，失败：${task.failed_count || 0})`;
                 }
             });
         }

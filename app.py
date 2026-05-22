@@ -22,6 +22,7 @@ class SingleTaskStatus:
         self.run_mode = run_mode
         self.parallel_num = parallel_num
         self.success_count = 0
+        self.failed_count = 0
         self.progress = 0
         self.message = "等待开始..."
         self.is_running = False
@@ -37,19 +38,61 @@ class GlobalStatus:
         self.stop_requested = False
         self.total_count = 0
         self.total_success_count = 0
+        self.total_failed_count = 0
         self.total_progress = 0
         self.message = "等待任务开始..."
         self.global_lock = threading.Lock()
 
 status = GlobalStatus()
 
+def record_task_result(task_status: SingleTaskStatus, success=0, failed=0):
+    """记录一次或多次访问结果，进度按已完成尝试数计算。"""
+    with task_status.lock:
+        task_status.success_count += success
+        task_status.failed_count += failed
+        completed_count = task_status.success_count + task_status.failed_count
+        task_status.progress = min(100, int((completed_count / task_status.total_count) * 100))
+
+    with status.global_lock:
+        status.total_success_count += success
+        status.total_failed_count += failed
+        total_completed_count = status.total_success_count + status.total_failed_count
+        status.total_progress = min(100, int((total_completed_count / status.total_count) * 100))
+
 # --- 模拟设备列表 (User-Agents) ---
-USER_AGENTS = [
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.74 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36"
+USER_AGENT_PROFILES = [
+    {
+        "name": "Windows Chrome",
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "window_size": "1366,768",
+        "mobile": False,
+    },
+    {
+        "name": "Windows Edge",
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+        "window_size": "1440,900",
+        "mobile": False,
+    },
+    {
+        "name": "macOS Chrome",
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "window_size": "1512,982",
+        "mobile": False,
+    },
+    {
+        "name": "Android Chrome",
+        "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "window_size": "412,915",
+        "mobile": True,
+        "device_metrics": {"width": 412, "height": 915, "pixelRatio": 2.625},
+    },
+    {
+        "name": "Samsung Chrome",
+        "ua": "Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "window_size": "384,854",
+        "mobile": True,
+        "device_metrics": {"width": 384, "height": 854, "pixelRatio": 3},
+    },
 ]
 
 def single_uv_task(task_status: SingleTaskStatus):
@@ -62,7 +105,15 @@ def single_uv_task(task_status: SingleTaskStatus):
     try:
         # 创建临时目录作为独立用户数据目录，完全隔离会话
         temp_dir = tempfile.mkdtemp()
+        profile = random.choice(USER_AGENT_PROFILES)
         chrome_options = webdriver.ChromeOptions()
+        if profile["mobile"]:
+            chrome_options.add_experimental_option("mobileEmulation", {
+                "deviceMetrics": profile["device_metrics"],
+                "userAgent": profile["ua"],
+            })
+        else:
+            chrome_options.add_argument(f"--user-agent={profile['ua']}")
         chrome_options.add_argument("--incognito")  # 无痕模式
         chrome_options.add_argument(f"--user-data-dir={temp_dir}")  # 独立数据目录
         chrome_options.add_argument("--disable-gpu")
@@ -70,17 +121,18 @@ def single_uv_task(task_status: SingleTaskStatus):
         chrome_options.add_argument("--disable-dev-shm-usage")
         if task_status.run_mode == "visible":
             chrome_options.add_argument("--new-window")  # 新窗口打开
-            chrome_options.add_argument("--window-size=800,600")  # 固定窗口大小，避免占满屏幕
+            chrome_options.add_argument(f"--window-size={profile['window_size']}")  # 窗口尺寸与UA保持一致
         else:
             # 后台无头模式参数
             chrome_options.add_argument("--headless=new")  # Chrome新版无头模式
             chrome_options.add_argument("--mute-audio")  # 静音
             chrome_options.add_argument("--disable-extensions")  # 禁用所有扩展
             chrome_options.add_argument("--disable-notifications")  # 禁用桌面通知
-            chrome_options.add_argument("--window-size=1920,1080")  # 模拟正常窗口大小
+            chrome_options.add_argument(f"--window-size={profile['window_size']}")  # 窗口尺寸与UA保持一致
         
         # 启动全新浏览器
         driver = webdriver.Chrome(options=chrome_options)
+        driver.set_page_load_timeout(30)
         # 将driver加入任务的列表，方便停止
         with task_status.lock:
             task_status.drivers.append(driver)
@@ -90,17 +142,13 @@ def single_uv_task(task_status: SingleTaskStatus):
         # 等待页面加载完成（1-2秒模拟用户停留）
         time.sleep(random.uniform(1, 2))
         
-        # 成功一次，加锁修改计数
-        with task_status.lock:
-            task_status.success_count += 1
-            task_status.progress = int((task_status.success_count / task_status.total_count) * 100)
-        # 更新全局计数
-        with status.global_lock:
-            status.total_success_count += 1
-            status.total_progress = int((status.total_success_count / status.total_count) * 100)
+        record_task_result(task_status, success=1)
         
         return True
-    except Exception:
+    except Exception as e:
+        if not task_status.stop_requested and not status.stop_requested:
+            print(f"[UV失败] {task_status.url}: {e}", flush=True)
+            record_task_result(task_status, failed=1)
         return False
     finally:
         # 清理资源
@@ -143,19 +191,14 @@ def single_pv_worker(task_status: SingleTaskStatus, refresh_count: int):
         chrome_options.add_argument("--disable-dev-shm-usage")
         
         driver = webdriver.Chrome(options=chrome_options)
+        driver.set_page_load_timeout(30)
         # 将driver加入任务的列表，方便停止
         with task_status.lock:
             task_status.drivers.append(driver)
         
         # 首次打开网址
         driver.get(task_status.url)
-        with task_status.lock:
-            task_status.success_count += 1
-            task_status.progress = int((task_status.success_count / task_status.total_count) * 100)
-        # 更新全局计数
-        with status.global_lock:
-            status.total_success_count += 1
-            status.total_progress = int((status.total_success_count / status.total_count) * 100)
+        record_task_result(task_status, success=1)
         
         # 刷新指定次数
         for _ in range(refresh_count - 1):
@@ -163,19 +206,17 @@ def single_pv_worker(task_status: SingleTaskStatus, refresh_count: int):
                 break
             try:
                 driver.refresh()
-                with task_status.lock:
-                    task_status.success_count += 1
-                    task_status.progress = int((task_status.success_count / task_status.total_count) * 100)
-                # 更新全局计数
-                with status.global_lock:
-                    status.total_success_count += 1
-                    status.total_progress = int((status.total_success_count / status.total_count) * 100)
-            except Exception:
-                pass
+                record_task_result(task_status, success=1)
+            except Exception as e:
+                if not task_status.stop_requested and not status.stop_requested:
+                    print(f"[PV刷新失败] {task_status.url}: {e}", flush=True)
+                    record_task_result(task_status, failed=1)
             time.sleep(random.uniform(1, 3))
             
-    except Exception:
-        pass
+    except Exception as e:
+        if not task_status.stop_requested and not status.stop_requested:
+            print(f"[PV打开失败] {task_status.url}: {e}", flush=True)
+            record_task_result(task_status, failed=refresh_count)
     finally:
         # 清理资源
         if driver:
@@ -192,6 +233,7 @@ def run_single_task(task_status: SingleTaskStatus):
     task_status.is_running = True
     task_status.message = "正在运行..."
     task_status.success_count = 0
+    task_status.failed_count = 0
     task_status.progress = 0
     with task_status.lock:
         task_status.drivers.clear()
@@ -228,7 +270,10 @@ def run_single_task(task_status: SingleTaskStatus):
         
         # 任务完成
         if not task_status.stop_requested and not status.stop_requested:
-            task_status.message = "任务已完成"
+            if task_status.failed_count:
+                task_status.message = f"任务已结束：成功 {task_status.success_count} 次，失败 {task_status.failed_count} 次"
+            else:
+                task_status.message = "任务已完成"
     except Exception as e:
         task_status.message = f"任务出错: {str(e)}"
     finally:
@@ -247,7 +292,10 @@ def run_single_task(task_status: SingleTaskStatus):
         if task_status.stop_requested or status.stop_requested:
             task_status.message = "任务已手动停止"
         elif task_status.progress >= 100:
-            task_status.message = "任务已完成"
+            if task_status.failed_count:
+                task_status.message = f"任务已结束：成功 {task_status.success_count} 次，失败 {task_status.failed_count} 次"
+            else:
+                task_status.message = "任务已完成"
 
 def brush_logic(tasks_config):
     """核心刷量逻辑：支持多任务独立运行"""
@@ -257,6 +305,7 @@ def brush_logic(tasks_config):
     status.tasks = []
     status.total_count = 0
     status.total_success_count = 0
+    status.total_failed_count = 0
     status.total_progress = 0
     status.message = "正在运行所有任务..."
 
@@ -292,6 +341,8 @@ def brush_logic(tasks_config):
     status.is_running = False
     if status.stop_requested:
         status.message = "所有任务已手动停止"
+    elif status.total_failed_count:
+        status.message = f"所有任务已结束：成功 {status.total_success_count} 次，失败 {status.total_failed_count} 次"
     else:
         status.message = "所有任务已完成"
 
@@ -336,6 +387,7 @@ def get_status():
             "is_running": task.is_running,
             "progress": task.progress,
             "success_count": task.success_count,
+            "failed_count": task.failed_count,
             "total_count": task.total_count,
             "message": task.message
         })
@@ -344,6 +396,7 @@ def get_status():
         "is_running": status.is_running,
         "total_progress": status.total_progress,
         "total_success_count": status.total_success_count,
+        "total_failed_count": status.total_failed_count,
         "total_count": status.total_count,
         "message": status.message,
         "tasks": tasks_status

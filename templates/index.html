@@ -70,9 +70,9 @@
             <!-- 单个任务进度显示 -->
             <div class="task-progress" style="display: none; margin-top: 10px;">
                 <div class="progress-bar" style="height: 12px;">
-                    <div class="progress-fill" class="task-prog-fill"></div>
+                    <div class="progress-fill task-prog-fill"></div>
                 </div>
-                <div class="status-text" class="task-status" style="font-size: 12px; margin-top: 5px;">准备就绪</div>
+                <div class="status-text task-status" style="font-size: 12px; margin-top: 5px;">准备就绪</div>
             </div>
         </div>
     </div>
@@ -83,8 +83,17 @@
 
     <div style="display: flex; gap: 10px; margin-bottom: 15px;">
         <button id="startBtn" onclick="startTask()" style="flex: 1;">开始执行所有任务</button>
-        <button id="stopBtn" onclick="stopTask()" disabled style="flex: 1; background: #dc3
-</div>
+        <button id="stopBtn" onclick="stopTask()" disabled style="flex: 1; background: #dc3545;">停止所有任务</button>
+    </div>
+
+    <!-- 总进度显示 -->
+    <div class="progress-container" id="totalProgContainer" style="display: none;">
+        <h4 style="margin-bottom: 10px; text-align: center;">总进度</h4>
+        <div class="progress-bar"><div class="progress-fill" id="totalProgFill"></div></div>
+        <div class="status-text" id="totalStatusMsg">准备就绪</div>
+    </div>
+
+    <div id="taskProgressList"></div>
 
 <script>
     let timer;
